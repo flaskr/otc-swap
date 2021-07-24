@@ -3,7 +3,7 @@
 pragma solidity ^0.8.0;
 
 import "hardhat/console.sol";
-import './interfaces/IERC20.sol';
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * Contract for creating over-the-counter ERC20 swap between 2 addresses.
@@ -64,6 +64,15 @@ contract OTCSwap {
                       uint256 leg2DepositSoFar,
                       bool swapExecuted);
 
+    event SwapRefunded(uint32 id,
+                      address creator,
+                      address leg1Funder,
+                      address leg1TokenAddress,
+                      uint256 leg1RefundedAmount,
+                      address leg2Funder,
+                      address leg2TokenAddress,
+                      uint256 leg2RefundedAmount);
+
     constructor() {
         swapIdCount = 0;
         overDepositThreshold = 2;
@@ -75,9 +84,9 @@ contract OTCSwap {
                             address leg2Funder, 
                             address leg2TokenAddress, 
                             uint256 leg2TargetAmount) external {
-        require(leg1TargetAmount > 0, "Leg 1 amount has to be more than 0.")
-        require(leg2TargetAmount > 0, "Leg 2 amount has to be more than 0.")
-        require(leg1Funder != leg2Funder, "Swap should be between different accounts.")
+        require(leg1TargetAmount > 0, "Leg 1 amount has to be more than 0.");
+        require(leg2TargetAmount > 0, "Leg 2 amount has to be more than 0.");
+        require(leg1Funder != leg2Funder, "Swap should be between different accounts.");
         //verify valid token addresses
         swapIdCount++;
         uint32 newId = swapIdCount;
@@ -111,7 +120,7 @@ contract OTCSwap {
         require(swapLegToFund.depositSoFar < swapLegToFund.targetFundingAmount, "Swap leg is already fully funded.");
         require(swapLegToFund.depositSoFar.add(tokenAmount) <= swapLegToFund.targetFundingAmount.mul(overDepositThreshold), "Total funding amount exceeded deposit threshold. Please verify funding amount.");
         IERC20 memory token = IERC20(tokenAddress);
-        token.transferFrom(msg.sender, address(this), tokenAmount); //TODO: Can allowanance/balance checks be delegated to token contract?
+        token.transferFrom(msg.sender, address(this), tokenAmount); //TODO: Can allowance/balance checks be delegated to token contract?
         swapLegToFund.depositSoFar.add(tokenAmount);
         _executeSwapIfFullyFunded(swapToFund);
     }
@@ -128,38 +137,68 @@ contract OTCSwap {
     function _executeSwapIfFullyFunded(Swap storage swap) internal {
         bool swapExecuted = false;
         if (swap.leg1.depositSoFar >= swap.leg1.targetFundingAmount &&
-            swap.leg2.depositSoFar >= swap.leg2.targetFundingAmount) {
+                swap.leg2.depositSoFar >= swap.leg2.targetFundingAmount) {
             IERC20 leg1Token = IERC20(swap.leg1.tokenAddress);
-            leg1Token.transfer(swap.leg1.receipientAddress, swap.leg1.depositSoFar); //TODO: Can allowanance/balance checks be delegated to token contract?
+            leg1Token.transfer(swap.leg1.receipientAddress, swap.leg1.depositSoFar); //TODO: Can allowance/balance checks be delegated to token contract?
             IERC20 leg2Token = IERC20(swap.leg2.tokenAddress);
-            leg2Token.transfer(swap.leg2.receipientAddress, swap.leg2.depositSoFar); //TODO: Can allowanance/balance checks be delegated to token contract?
+            leg2Token.transfer(swap.leg2.receipientAddress, swap.leg2.depositSoFar); //TODO: Can allowance/balance checks be delegated to token contract?
             swapExecuted = true;
         }
         emit SwapFundingStatus(swap.id,
-                                swap.creator,
-                                swap.leg1.funderAddress, 
-                                swap.leg1.receipientAddress,
-                                swap.leg1.tokenAddress,
-                                swap.leg1.targetFundingAmount,
-                                swap.leg1.depositSoFar,
-                                swap.leg2.funderAddress, 
-                                swap.leg2.receipientAddress,
-                                swap.leg2.tokenAddress,
-                                swap.leg2.targetFundingAmount,
-                                swap.leg2.depositSoFar,
-                                swapExecuted);
+                               swap.creator,
+                               swap.leg1.funderAddress, 
+                               swap.leg1.receipientAddress,
+                               swap.leg1.tokenAddress,
+                               swap.leg1.targetFundingAmount,
+                               swap.leg1.depositSoFar,
+                               swap.leg2.funderAddress, 
+                               swap.leg2.receipientAddress,
+                               swap.leg2.tokenAddress,
+                               swap.leg2.targetFundingAmount,
+                               swap.leg2.depositSoFar,
+                               swapExecuted);
     }
-    
-    
 
     function cancelAndRefundSwap(uint32 id) external {
         require(swapsById[id], "Given swap id does not exist.");
-        
-        
+        Swap storage swap = swapsById[id];
+        _refundSwapLeg(swap.leg1);
+        _refundSwapLeg(swap.leg2);
+        emit SwapRefunded(swap.id,
+                          swap.creator,
+                          swap.leg1.funderAddress,
+                          swap.leg1.tokenAddress,
+                          swap.leg1.depositSoFar,
+                          swap.leg2.funderAddress,
+                          swap.leg2.tokenAddress,
+                          swap.leg2.depositSoFar);
+        delete swapsById[id];
     }
 
-    function getSwapsFor(address targetAddress) external view {
-         
+    /**
+     * Refunds the swapleg's deposit amount to the funder if there's any balance. 
+     * Doesn't set swapLeg.depositSoFar to 0 because we assume the caller is going to delete the stored Swap anyway. The parent is also using it to emit events.
+     */
+    function _refundSwapLeg(SwapLeg storage swapLeg) internal {
+        if (swapLeg.depositSoFar > 0) {
+            IERC20 token = IERC20(swapLeg.tokenAddress);
+            token.transfer(swapLeg.funderAddress, swapLeg.depositSoFar); //TODO: Can allowance/balance checks be delegated to token contract?
+        }
+    }
+
+    function getSwapsFor(address targetAddress) external view returns(uint32[]) {
+        uint32[] storage swapIds = [];
+        for (uint i = 0; i < swapIdCount; i++) {
+            if (swapsById[i]) {
+                Swap storage eachSwap = swapsById[i];
+                if (msg.sender == eachSwap.creator 
+                        || msg.sender == eachSwap.leg1.funderAddress
+                        || msg.sender == eachSwap.leg2.funderAddress) {
+                    swapIds.push(i);
+                }
+            }
+        }
+        return i;
     }
 
 }
