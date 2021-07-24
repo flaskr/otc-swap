@@ -51,27 +51,27 @@ contract OTCSwap {
                       uint256 leg2TargetAmount);
     
     event SwapFundingStatus(uint32 id,
-                      address creator,
-                      address leg1Funder,
-                      address leg1Receipient,
-                      address leg1TokenAddress,
-                      uint256 leg1TargetAmount,
-                      uint256 leg1DepositSoFar,
-                      address leg2Funder,
-                      address leg2Receipient,
-                      address leg2TokenAddress,
-                      uint256 leg2TargetAmount,
-                      uint256 leg2DepositSoFar,
-                      bool swapExecuted);
+                            address creator,
+                            address leg1Funder,
+                            address leg1Receipient,
+                            address leg1TokenAddress,
+                            uint256 leg1TargetAmount,
+                            uint256 leg1DepositSoFar,
+                            address leg2Funder,
+                            address leg2Receipient,
+                            address leg2TokenAddress,
+                            uint256 leg2TargetAmount,
+                            uint256 leg2DepositSoFar,
+                            bool swapExecuted);
 
     event SwapRefunded(uint32 id,
-                      address creator,
-                      address leg1Funder,
-                      address leg1TokenAddress,
-                      uint256 leg1RefundedAmount,
-                      address leg2Funder,
-                      address leg2TokenAddress,
-                      uint256 leg2RefundedAmount);
+                        address creator,
+                        address leg1Funder,
+                        address leg1TokenAddress,
+                        uint256 leg1RefundedAmount,
+                        address leg2Funder,
+                        address leg2TokenAddress,
+                        uint256 leg2RefundedAmount);
 
     constructor() {
         swapIdCount = 0;
@@ -186,6 +186,9 @@ contract OTCSwap {
         }
     }
 
+    /**
+     * Returns list of swap ids related to given address.
+     */
     function getSwapsFor(address targetAddress) external view returns(uint32[]) {
         uint32[] storage swapIds = [];
         for (uint i = 0; i < swapIdCount; i++) {
@@ -198,7 +201,24 @@ contract OTCSwap {
                 }
             }
         }
-        return i;
+        return swapIds;
+    }
+
+    function getSwapInfo(uint32 id) external view returns(uint32, address, address, address, address, uint256, address, address, address, uint256) {
+        require(swapsById[id], "No swap found for given id. It may have been refunded.");
+        Swap storage swap = swapsById[id];
+        return (
+            swap.id,
+            swap.creator,creator,
+            swap.leg1.funderAddress,
+            swap.leg1.receipientAddress,
+            swap.leg1.tokenAddress,
+            swap.leg1.targetFundingAmount,
+            swap.leg2.funderAddress,
+            swap.leg2.receipientAddress,
+            swap.leg2.tokenAddress,
+            swap.leg2.targetFundingAmount
+        );
     }
 
 }
