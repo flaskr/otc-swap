@@ -5,10 +5,7 @@ pragma solidity ^0.8.0;
 import "hardhat/console.sol";
 
 /**
- * Contract for creating over-the-counter ERC20 swap between 2 tokens.
- * Receipeint addresses are fixed, funder's address is advised but anyone can fund the legs.
- * Once all legs of a swap are funded, the contract will send the tokens deposit into each leg to the target receipient.
- * If you overfund a leg, the extra amount will be added contract's surplus funds, and the swap will still occur.
+ * Contract for creating over-the-counter ERC20 swap between 2 addresses.
  */
 contract OTCSwap {
 
@@ -16,13 +13,13 @@ contract OTCSwap {
 
     uint32 swapIdCount;
     mapping(uint32 => Swap) swapsById;
-    mapping(address => uint256) tokenSurpluses;
 
     /**
      * Holds the state for a swap between 2 receipients.
      */
     struct Swap {
         uint32 id;
+        address creator;
         SwapLeg leg1;
         SwapLeg leg2;
     }
@@ -31,6 +28,7 @@ contract OTCSwap {
      * Represents one leg of a swap.
      */
     struct SwapLeg {
+        address funderAddress;
         address receipientAddress;
         address tokenAddress;
         uint256 targetFundingAmount;
@@ -38,33 +36,49 @@ contract OTCSwap {
     }
 
     event SwapCreated(uint32 id,
+                      address creator,
+                      address leg1Funder,
                       address leg1Receipient,
                       address leg1TokenAddress,
                       uint256 leg1TargetAmount,
+                      address leg2Funder,
                       address leg2Receipient,
                       address leg2TokenAddress,
                       uint256 leg2TargetAmount);
     
 
     constructor() {
-        // init id count
         swapIdCount = 0;
     }
 
-    function createNewSwap(address leg1Receipient, 
+    function createNewSwap(address leg1Funder, 
                             address leg1TokenAddress, 
                             uint256 leg1TargetAmount,
-                            address leg2Receipient, 
+                            address leg2Funder, 
                             address leg2TokenAddress, 
                             uint256 leg2TargetAmount) external {
         swapIdCount++;
         uint32 newId = swapIdCount;
+        SwapLeg memory leg1 = SwapLeg(leg1Funder, leg2Funder, leg1TokenAddress, leg1TargetAmount, 0);
+        SwapLeg memory leg2 = SwapLeg(leg2Funder, leg1Funder, leg2TokenAddress, leg2TargetAmount, 0);
         swapsById[newId] = Swap(
             newId, 
-            SwapLeg(leg1Receipient, leg1TokenAddress, leg1TargetAmount, 0), 
-            SwapLeg(leg2Receipient, leg2TokenAddress, leg2TargetAmount, 0)
+            msg.sender,
+            leg1, 
+            leg2
         );
-        emit SwapCreated(newId, leg1Receipient, leg1TokenAddress, leg1TargetAmount, leg2Receipient, leg2TokenAddress, leg2TargetAmount);
+        emit SwapCreated(
+            newId, 
+            msg.sender,
+            leg1.funderAddress, 
+            leg1.receipientAddress,
+            leg1.tokenAddress,
+            leg1.targetFundingAmount,
+            leg2.funderAddress, 
+            leg2.receipientAddress,
+            leg2.tokenAddress,
+            leg2.targetFundingAmount
+        );
     }
 
     function fundSwapLeg(uint32 id) external {
@@ -72,11 +86,11 @@ contract OTCSwap {
     }
 
     function cancelSwap(uint32 id) external {
-
+        
     }
 
-    function getSwapsFor() external {
-
+    function getSwapsFor(address targetAddress) external view {
+         
     }
 
 }
