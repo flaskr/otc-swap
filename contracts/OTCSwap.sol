@@ -4,9 +4,11 @@ pragma solidity ^0.8.0;
 
 import "hardhat/console.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
 /**
  * Contract for creating over-the-counter ERC20 swap between 2 addresses.
+ * Warning - not intended to work with ERC-20 tokens that actually transfer lesser than amount required. Tokens can get stuck during the swap phase when we try to transfer depositedSoFar out from the contract's token balance.
  */
 contract OTCSwap {
 	using SafeMath for uint256;
@@ -51,14 +53,11 @@ contract OTCSwap {
                       uint256 leg2TargetAmount);
     
     event SwapFundingStatus(uint32 id,
-                            address creator,
                             address leg1Funder,
-                            address leg1Receipient,
                             address leg1TokenAddress,
                             uint256 leg1TargetAmount,
                             uint256 leg1DepositSoFar,
                             address leg2Funder,
-                            address leg2Receipient,
                             address leg2TokenAddress,
                             uint256 leg2TargetAmount,
                             uint256 leg2DepositSoFar,
@@ -114,18 +113,19 @@ contract OTCSwap {
 
     function fundSwapLeg(uint32 id, address tokenAddress, uint256 tokenAmount) external {
         require(tokenAmount > 0, "Funded amount has to be more than 0.");
-        require(swapsById[id], "Given swap id does not exist. It might have been cancelled and refunded.");
+        require(_swapIdExists(id), "Given swap id does not exist. It might have been cancelled and refunded.");
         Swap storage swapToFund = swapsById[id];
         SwapLeg storage swapLegToFund = _getSwapLeg(swapToFund, msg.sender);
+        require(swapLegToFund.tokenAddress == tokenAddress, "Provided token address does not match that of the funding leg of given address for this swap.");
         require(swapLegToFund.depositSoFar < swapLegToFund.targetFundingAmount, "Swap leg is already fully funded.");
-        require(swapLegToFund.depositSoFar.add(tokenAmount) <= swapLegToFund.targetFundingAmount.mul(overDepositThreshold), "Total funding amount exceeded deposit threshold. Please verify funding amount.");
-        IERC20 memory token = IERC20(tokenAddress);
-        token.transferFrom(msg.sender, address(this), tokenAmount); //TODO: Can allowance/balance checks be delegated to token contract?
-        swapLegToFund.depositSoFar.add(tokenAmount);
+        require(swapLegToFund.depositSoFar.add(tokenAmount) <= swapLegToFund.targetFundingAmount.mul(overDepositThreshold), "Total funding amount exceeded deposit threshold. Please verify funding amount."); // Attempt to improve UX by prevent what appears to be very wrong input.
+        IERC20 token = IERC20(tokenAddress);
+        token.transferFrom(msg.sender, address(this), tokenAmount); //TODO: Should allowance/balance checks be delegated to token contract like this?
+        swapLegToFund.depositSoFar.add(tokenAmount); // WARNING: using tokenAmount can be dangerous if the ERC-20 actually transfers lesser than 
         _executeSwapIfFullyFunded(swapToFund);
     }
     
-    function _getSwapLeg(Swap storage swapToFund, address funderAddress) internal view returns (SwapLeg) {
+    function _getSwapLeg(Swap storage swapToFund, address funderAddress) internal view returns (SwapLeg storage) {
         require( funderAddress == swapToFund.leg1.funderAddress || funderAddress == swapToFund.leg2.funderAddress, "Funding address is not from either of the legs.");
         if (funderAddress == swapToFund.leg1.funderAddress) {
             return swapToFund.leg1;
@@ -139,20 +139,17 @@ contract OTCSwap {
         if (swap.leg1.depositSoFar >= swap.leg1.targetFundingAmount &&
                 swap.leg2.depositSoFar >= swap.leg2.targetFundingAmount) {
             IERC20 leg1Token = IERC20(swap.leg1.tokenAddress);
-            leg1Token.transfer(swap.leg1.receipientAddress, swap.leg1.depositSoFar); //TODO: Can allowance/balance checks be delegated to token contract?
+            leg1Token.transfer(swap.leg1.receipientAddress, swap.leg1.depositSoFar); //TODO: Should allowance/balance checks be delegated to token contract like this?
             IERC20 leg2Token = IERC20(swap.leg2.tokenAddress);
-            leg2Token.transfer(swap.leg2.receipientAddress, swap.leg2.depositSoFar); //TODO: Can allowance/balance checks be delegated to token contract?
+            leg2Token.transfer(swap.leg2.receipientAddress, swap.leg2.depositSoFar); //TODO: Should allowance/balance checks be delegated to token contract like this?
             swapExecuted = true;
         }
         emit SwapFundingStatus(swap.id,
-                               swap.creator,
                                swap.leg1.funderAddress, 
-                               swap.leg1.receipientAddress,
                                swap.leg1.tokenAddress,
                                swap.leg1.targetFundingAmount,
                                swap.leg1.depositSoFar,
                                swap.leg2.funderAddress, 
-                               swap.leg2.receipientAddress,
                                swap.leg2.tokenAddress,
                                swap.leg2.targetFundingAmount,
                                swap.leg2.depositSoFar,
@@ -160,8 +157,9 @@ contract OTCSwap {
     }
 
     function cancelAndRefundSwap(uint32 id) external {
-        require(swapsById[id], "Given swap id does not exist.");
+        require(_swapIdExists(id), "Given swap id does not exist.");
         Swap storage swap = swapsById[id];
+        require(_isAddressAPartyInSwap(msg.sender, swap), "Caller is not a creator or funder in this swap.");
         _refundSwapLeg(swap.leg1);
         _refundSwapLeg(swap.leg2);
         emit SwapRefunded(swap.id,
@@ -189,35 +187,52 @@ contract OTCSwap {
     /**
      * Returns list of swap ids related to given address.
      */
-    function getSwapsFor(address targetAddress) external view returns(uint32[]) {
-        uint32[] storage swapIds = [];
-        for (uint i = 0; i < swapIdCount; i++) {
-            if (swapsById[i]) {
-                Swap storage eachSwap = swapsById[i];
-                if (msg.sender == eachSwap.creator 
-                        || msg.sender == eachSwap.leg1.funderAddress
-                        || msg.sender == eachSwap.leg2.funderAddress) {
-                    swapIds.push(i);
+    function getSwapsFor(address targetAddress) external view returns(uint32[] memory) {
+        uint numOfSwaps = 0;
+        for (uint32 i = 0; i < swapIdCount; i++) {
+            if (_swapIdExists(i)) {
+                if (_isAddressAPartyInSwap(targetAddress, swapsById[i])) {
+                    numOfSwaps++;
+                }
+            }
+        }
+        uint32[] memory swapIds = new uint32[](numOfSwaps);
+        uint insertIndex = 0;
+        for (uint32 i = 0; i < swapIdCount; i++) {
+            if (_swapIdExists(i)) {
+                if (_isAddressAPartyInSwap(targetAddress, swapsById[i])) {
+                    swapIds[insertIndex] = i;
+                    insertIndex++;
                 }
             }
         }
         return swapIds;
     }
 
-    function getSwapInfo(uint32 id) external view returns(uint32, address, address, address, address, uint256, address, address, address, uint256) {
-        require(swapsById[id], "No swap found for given id. It may have been refunded.");
+    function _swapIdExists(uint32 id) internal view returns (bool) {
+        return abi.encodePacked(swapsById[id].creator).length > 0;
+    }
+
+    function _isAddressAPartyInSwap(address addressToCheck, Swap memory swap) public pure returns (bool) {
+        return addressToCheck == swap.creator 
+                        || addressToCheck == swap.leg1.funderAddress
+                        || addressToCheck == swap.leg2.funderAddress;
+    }
+
+    function getSwapInfo(uint32 id) external view returns(uint32, address, address, address, uint256, uint256, address, address, uint256, uint256) {
+        require(_swapIdExists(id), "No swap found for given id. It may have been refunded.");
         Swap storage swap = swapsById[id];
         return (
             swap.id,
-            swap.creator,creator,
+            swap.creator,
             swap.leg1.funderAddress,
-            swap.leg1.receipientAddress,
             swap.leg1.tokenAddress,
             swap.leg1.targetFundingAmount,
+            swap.leg1.depositSoFar,
             swap.leg2.funderAddress,
-            swap.leg2.receipientAddress,
             swap.leg2.tokenAddress,
-            swap.leg2.targetFundingAmount
+            swap.leg2.targetFundingAmount,
+            swap.leg2.depositSoFar
         );
     }
 
