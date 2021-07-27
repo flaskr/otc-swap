@@ -8,7 +8,7 @@ import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
 /**
  * Contract for creating over-the-counter ERC20 swap between 2 addresses.
- * Warning - not intended to work with ERC-20 tokens that actually transfer lesser than amount required. Tokens can get stuck during the swap phase when we try to transfer depositedSoFar out from the contract's token balance.
+ * Warning - not intended to work with ERC-20 tokens that actually transfer lesser than amount required when `transferFrom()` is called. Tokens can get stuck during the swap phase when we try to transfer depositedSoFar out from the contract's token balance. See `fundSwapLeg()` for details.
  */
 contract OTCSwap {
 	using SafeMath for uint256;
@@ -35,7 +35,7 @@ contract OTCSwap {
      */
     struct SwapLeg {
         address funderAddress;
-        address receipientAddress;
+        address receipientAddress; //Can potentially save on storage gas by increasing complexity in transfer code to use data from the other leg.
         address tokenAddress;
         uint256 targetFundingAmount;
         uint256 depositSoFar;
@@ -120,8 +120,12 @@ contract OTCSwap {
         require(swapLegToFund.depositSoFar < swapLegToFund.targetFundingAmount, "Swap leg is already fully funded.");
         require(swapLegToFund.depositSoFar.add(tokenAmount) <= swapLegToFund.targetFundingAmount.mul(overDepositThreshold), "Total funding amount exceeded deposit threshold. Please verify funding amount."); // Attempt to improve UX by prevent what appears to be very wrong input.
         IERC20 token = IERC20(tokenAddress);
-        token.transferFrom(msg.sender, address(this), tokenAmount); //TODO: Should allowance/balance checks be delegated to token contract like this?
-        swapLegToFund.depositSoFar.add(tokenAmount); // WARNING: using tokenAmount can be dangerous if the ERC-20 actually transfers lesser than 
+        token.transferFrom(msg.sender, address(this), tokenAmount);
+        
+        // WARNING: Using `tokenAmount` can be dangerous if the ERC-20 actually transfers lesser than target token amount. Tokens can get stuck in this contract.
+        // Consider including before/after balance checks at cost of extra gas, if this is to be used by a wider audience who may use such ERC-20s.
+        swapLegToFund.depositSoFar = swapLegToFund.depositSoFar.add(tokenAmount);
+        
         _executeSwapIfFullyFunded(swapToFund);
     }
     
@@ -139,9 +143,9 @@ contract OTCSwap {
         if (swap.leg1.depositSoFar >= swap.leg1.targetFundingAmount &&
                 swap.leg2.depositSoFar >= swap.leg2.targetFundingAmount) {
             IERC20 leg1Token = IERC20(swap.leg1.tokenAddress);
-            leg1Token.transfer(swap.leg1.receipientAddress, swap.leg1.depositSoFar); //TODO: Should allowance/balance checks be delegated to token contract like this?
+            leg1Token.transfer(swap.leg1.receipientAddress, swap.leg1.depositSoFar);
             IERC20 leg2Token = IERC20(swap.leg2.tokenAddress);
-            leg2Token.transfer(swap.leg2.receipientAddress, swap.leg2.depositSoFar); //TODO: Should allowance/balance checks be delegated to token contract like this?
+            leg2Token.transfer(swap.leg2.receipientAddress, swap.leg2.depositSoFar);
             swapExecuted = true;
         }
         emit SwapFundingStatus(swap.id,
@@ -154,6 +158,9 @@ contract OTCSwap {
                                swap.leg2.targetFundingAmount,
                                swap.leg2.depositSoFar,
                                swapExecuted);
+        if (swapExecuted) {
+            delete swapsById[swap.id];
+        }
     }
 
     function cancelAndRefundSwap(uint32 id) external {
@@ -189,7 +196,7 @@ contract OTCSwap {
      */
     function getSwapsFor(address targetAddress) external view returns(uint32[] memory) {
         uint numOfSwaps = 0;
-        for (uint32 i = 0; i < swapIdCount; i++) {
+        for (uint32 i = 1; i <= swapIdCount; i++) {
             if (_swapIdExists(i)) {
                 if (_isAddressAPartyInSwap(targetAddress, swapsById[i])) {
                     numOfSwaps++;
@@ -198,7 +205,7 @@ contract OTCSwap {
         }
         uint32[] memory swapIds = new uint32[](numOfSwaps);
         uint insertIndex = 0;
-        for (uint32 i = 0; i < swapIdCount; i++) {
+        for (uint32 i = 1; i <= swapIdCount; i++) {
             if (_swapIdExists(i)) {
                 if (_isAddressAPartyInSwap(targetAddress, swapsById[i])) {
                     swapIds[insertIndex] = i;
@@ -210,7 +217,7 @@ contract OTCSwap {
     }
 
     function _swapIdExists(uint32 id) internal view returns (bool) {
-        return abi.encodePacked(swapsById[id].creator).length > 0;
+        return swapsById[id].creator != address(0); //If it's 0, it has been set to the default address. Implying that swap was deleted.
     }
 
     function _isAddressAPartyInSwap(address addressToCheck, Swap memory swap) public pure returns (bool) {
