@@ -118,7 +118,7 @@ contract OTCSwap {
         SwapLeg storage swapLegToFund = _getSwapLeg(swapToFund, msg.sender);
         require(swapLegToFund.tokenAddress == tokenAddress, "Provided token address does not match that of the funding leg of given address for this swap.");
         require(swapLegToFund.depositSoFar < swapLegToFund.targetFundingAmount, "Swap leg is already fully funded.");
-        require(swapLegToFund.depositSoFar.add(tokenAmount) <= swapLegToFund.targetFundingAmount.mul(overDepositThreshold), "Total funding amount exceeded deposit threshold. Please verify funding amount."); // Attempt to improve UX by prevent what appears to be very wrong input.
+        require(swapLegToFund.depositSoFar.add(tokenAmount) <= swapLegToFund.targetFundingAmount.mul(overDepositThreshold), "Total funding amount exceeded deposit threshold. Please verify funding amount."); // Attempt to improve UX by reject what appears to be very wrong input.
         IERC20 token = IERC20(tokenAddress);
         token.transferFrom(msg.sender, address(this), tokenAmount);
         
