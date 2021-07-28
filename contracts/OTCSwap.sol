@@ -2,7 +2,7 @@
 
 pragma solidity ^0.8.0;
 
-import "hardhat/console.sol";
+// import "hardhat/console.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
@@ -187,7 +187,7 @@ contract OTCSwap {
     function _refundSwapLeg(SwapLeg storage swapLeg) internal {
         if (swapLeg.depositSoFar > 0) {
             IERC20 token = IERC20(swapLeg.tokenAddress);
-            token.transfer(swapLeg.funderAddress, swapLeg.depositSoFar); //TODO: Can allowance/balance checks be delegated to token contract?
+            token.transfer(swapLeg.funderAddress, swapLeg.depositSoFar);
         }
     }
 

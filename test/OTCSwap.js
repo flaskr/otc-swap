@@ -18,7 +18,6 @@ describe("OTCSwap contract", function () {
   let addrs;
 
   beforeEach(async function () {
-    
     Leg1ERC20 = await ethers.getContractFactory("ERC20Stub");
     Leg2ERC20 = await ethers.getContractFactory("ERC20Stub");
     OTCSwapContract = await ethers.getContractFactory("OTCSwap");
@@ -138,7 +137,8 @@ describe("OTCSwap contract", function () {
       assertAddressHasNoSwaps(leg1Addr.address)
       assertAddressHasNoSwaps(leg2Addr.address)
       
-      //TODO: Check that swap id 1 is no longer valid
+      let invalidSwapIdLookup = otcSwap.getSwapInfo(1);
+      await expect(invalidSwapIdLookup).to.be.revertedWith("No swap found for given id");
     });
 
 
@@ -158,14 +158,84 @@ describe("OTCSwap contract", function () {
 
     });
 
-    //TODO: Should fail when attempting to fund a fully funded leg.
+    it("Should fail when attempting to fund a fully funded leg.", async function () {
+      await otcSwap.createNewSwap(
+        leg1Addr.address, leg1ERC20Instance.address, 50,
+        leg2Addr.address, leg2ERC20Instance.address, 100
+      );
+      
+      await otcSwap.connect(leg1Addr).fundSwapLeg(1, leg1ERC20Instance.address, 50);
+      let repeatFundingTxn = otcSwap.connect(leg1Addr).fundSwapLeg(1, leg1ERC20Instance.address, 10);
+      await expect(repeatFundingTxn).to.be.revertedWith("Swap leg is already fully funded.");
+    });
 
-    //TODO: Should fail when grossly overfunding.
+    it("Should fail when grossly overfunding.", async function () {
+      await otcSwap.createNewSwap(
+        leg1Addr.address, leg1ERC20Instance.address, 50,
+        leg2Addr.address, leg2ERC20Instance.address, 100
+      );
+      
+      let overFundedTxn = otcSwap.connect(leg1Addr).fundSwapLeg(1, leg1ERC20Instance.address, 500);
+      await expect(overFundedTxn).to.be.revertedWith("funding amount exceeded deposit threshold");
+    });
 
-    //TODO: Should allow funding only be relevant address for easier refunds.
+    it("Should fail when funding with wrong token contract.", async function () {
+      let WrongERC20 = await ethers.getContractFactory("ERC20Stub");
+      let wrongERC20Instance = await WrongERC20.deploy();
+      await wrongERC20Instance.deployed();
 
-    //TODO: Should refund tokens when cancelled by relevant parties.
+      wrongERC20Instance.transfer(leg1Addr.address, 1000000);
+      wrongERC20Instance.connect(leg1Addr).approve(otcSwap.address, 1000000);
 
+      await otcSwap.createNewSwap(
+        leg1Addr.address, leg1ERC20Instance.address, 50,
+        leg2Addr.address, leg2ERC20Instance.address, 100
+      );
+      
+      let wrongTokenFunding = otcSwap.connect(leg1Addr).fundSwapLeg(1, wrongERC20Instance.address, 50);
+      await expect(wrongTokenFunding).to.be.revertedWith("Provided token address does not match that of the funding leg");
+    });
+
+
+    it("Should allow funding only be relevant address for easier refunds.", async function () {
+      leg1ERC20Instance.connect(leg1Addr).transfer(extraAddr1.address, 1000);
+      leg1ERC20Instance.connect(extraAddr1).approve(otcSwap.address, 1000000);
+
+      await otcSwap.createNewSwap(
+        leg1Addr.address, leg1ERC20Instance.address, 50,
+        leg2Addr.address, leg2ERC20Instance.address, 100
+      );
+      
+      let unauthorizedFunding = otcSwap.connect(extraAddr1).fundSwapLeg(1, leg1ERC20Instance.address, 50);
+      await expect(unauthorizedFunding).to.be.revertedWith("Funding address is not from either of the legs.");
+    });
+
+    it("Should refund tokens and delete swap when cancelled by relevant parties.", async function () {
+      await otcSwap.createNewSwap(
+        leg1Addr.address, leg1ERC20Instance.address, 50,
+        leg2Addr.address, leg2ERC20Instance.address, 100
+      );
+      
+      await otcSwap.connect(leg1Addr).fundSwapLeg(1, leg1ERC20Instance.address, 50);
+      await otcSwap.connect(leg2Addr).fundSwapLeg(1, leg2ERC20Instance.address, 50); //half funded so swap doesn't execute
+
+      await expect(otcSwap.connect(leg2Addr).cancelAndRefundSwap(1))
+        .to.emit(otcSwap, 'SwapRefunded')
+        .withArgs(
+            1,
+            owner.address,
+            leg1Addr.address, leg1ERC20Instance.address, 50,
+            leg2Addr.address, leg2ERC20Instance.address, 50
+        );
+
+      const leg1Balance = await leg1ERC20Instance.balanceOf(leg1Addr.address);
+      expect(leg1Balance).to.equal(1000000);
+      const leg2Balance = await leg2ERC20Instance.balanceOf(leg2Addr.address);
+      expect(leg2Balance).to.equal(1000000);
+
+      let invalidSwapIdLookup = otcSwap.getSwapInfo(1);
+      await expect(invalidSwapIdLookup).to.be.revertedWith("No swap found for given id");
+    });
 
   });
 
