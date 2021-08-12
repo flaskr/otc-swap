@@ -19,17 +19,17 @@ async function main() {
 
   console.log("Account balance:", (await deployer.getBalance()).toString());
 
-  const Token = await ethers.getContractFactory("Token");
-  const token = await Token.deploy();
-  await token.deployed();
+  const OTCSwap = await ethers.getContractFactory("OTCSwap");
+  const otcSwap = await OTCSwap.deploy();
+  await otcSwap.deployed();
 
-  console.log("Token address:", token.address);
+  console.log("OTCSwap address:", otcSwap.address);
 
   // We also save the contract's artifacts and address in the frontend directory
-  saveFrontendFiles(token);
+  saveFrontendFiles(otcSwap);
 }
 
-function saveFrontendFiles(token) {
+function saveFrontendFiles(otcSwap) {
   const fs = require("fs");
   const contractsDir = __dirname + "/../frontend/src/contracts";
 
@@ -39,14 +39,14 @@ function saveFrontendFiles(token) {
 
   fs.writeFileSync(
     contractsDir + "/contract-address.json",
-    JSON.stringify({ Token: token.address }, undefined, 2)
+    JSON.stringify({ OTCSwap: otcSwap.address }, undefined, 2)
   );
 
-  const TokenArtifact = artifacts.readArtifactSync("Token");
+  const OTCSwapArtifact = artifacts.readArtifactSync("OTCSwap");
 
   fs.writeFileSync(
-    contractsDir + "/Token.json",
-    JSON.stringify(TokenArtifact, null, 2)
+    contractsDir + "/OTCSwap.json",
+    JSON.stringify(OTCSwapArtifact, null, 2)
   );
 }
 

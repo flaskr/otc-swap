@@ -5,7 +5,7 @@ import { ethers } from "ethers";
 
 // We import the contract's artifacts and address here, as we are going to be
 // using them with ethers
-import TokenArtifact from "../contracts/Token.json";
+import OTCSwapArtifact from "../contracts/OTCSwap.json";
 import contractAddress from "../contracts/contract-address.json";
 
 // All the logic of this dapp is contained in the Dapp component.
@@ -45,10 +45,10 @@ export class Dapp extends React.Component {
     // You don't need to follow this pattern, but it's an useful example.
     this.initialState = {
       // The info of the token (i.e. It's Name and symbol)
-      tokenData: undefined,
+      
       // The user's address and balance
       selectedAddress: undefined,
-      balance: undefined,
+      swaps: undefined,
       // The ID about transactions being sent, and any possible error with them
       txBeingSent: undefined,
       transactionError: undefined,
@@ -84,7 +84,7 @@ export class Dapp extends React.Component {
 
     // If the token data or the user's balance hasn't loaded yet, we show
     // a loading component.
-    if (!this.state.tokenData || !this.state.balance) {
+    if (!this.state.swaps) {
       return <Loading />;
     }
 
@@ -94,14 +94,14 @@ export class Dapp extends React.Component {
         <div className="row">
           <div className="col-12">
             <h1>
-              {this.state.tokenData.name} ({this.state.tokenData.symbol})
+              OTC Swaps
             </h1>
             <p>
               Welcome <b>{this.state.selectedAddress}</b>, you have{" "}
               <b>
-                {this.state.balance.toString()} {this.state.tokenData.symbol}
+                {this.state.swaps.length}
               </b>
-              .
+              active swaps.
             </p>
           </div>
         </div>
@@ -219,8 +219,7 @@ export class Dapp extends React.Component {
     // Fetching the token data and the user's balance are specific to this
     // sample project, but you can reuse the same initialization pattern.
     this._intializeEthers();
-    this._getTokenData();
-    this._startPollingData();
+    this._updateSwapData();
   }
 
   async _intializeEthers() {
@@ -229,9 +228,9 @@ export class Dapp extends React.Component {
 
     // When, we initialize the contract using that provider and the token's
     // artifact. You can do this same thing with your contracts.
-    this._token = new ethers.Contract(
-      contractAddress.Token,
-      TokenArtifact.abi,
+    this._otcSwap = new ethers.Contract(
+      contractAddress.OTCSwap,
+      OTCSwapArtifact.abi,
       this._provider.getSigner(0)
     );
   }
@@ -244,10 +243,10 @@ export class Dapp extends React.Component {
   // don't need to poll it. If that's the case, you can just fetch it when you
   // initialize the app, as we do with the token data.
   _startPollingData() {
-    this._pollDataInterval = setInterval(() => this._updateBalance(), 1000);
+    // this._pollDataInterval = setInterval(() => this._updateSwaps(), 1000); // don't update first
 
     // We run it once immediately so we don't have to wait for it
-    this._updateBalance();
+    this._updateSwaps();
   }
 
   _stopPollingData() {
@@ -257,11 +256,16 @@ export class Dapp extends React.Component {
 
   // The next two methods just read from the contract and store the results
   // in the component state.
-  async _getTokenData() {
-    const name = await this._token.name();
-    const symbol = await this._token.symbol();
 
-    this.setState({ tokenData: { name, symbol } });
+  async _updateSwapData() {
+    console.log("Addresss: " + this.state.selectedAddress);
+    const allSwapIds = await this._otcSwap.getSwapsFor(this.state.selectedAddress);
+    const allSwaps = await allSwapIds.map(
+      id => this._otcSwap.getSwapInfo(id)
+    );
+    console.log("AllSwaps:" + allSwaps);
+    console.log(allSwaps)
+    this.setState({swaps : allSwaps});
   }
 
   async _updateBalance() {

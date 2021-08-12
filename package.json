@@ -33,8 +33,5 @@
     "hardhat": "^2.5.0",
     "husky": "^4.2.5"
   },
-  "main": "hardhat.config.js",
-  "dependencies": {
-    "@openzeppelin/test-helpers": "^0.5.12"
-  }
+  "main": "hardhat.config.js"
 }
